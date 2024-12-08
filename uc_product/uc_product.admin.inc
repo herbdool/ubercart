@@ -487,13 +487,12 @@ function uc_product_class_form_submit($form, &$form_state) {
   // Convert whitespace to underscores, and remove other non-alphanumeric characters.
   $pcid = preg_replace(array('/\s+/', '/\W/'), array('_', ''), strtolower($pcid));
 
-  $result = db_merge('uc_product_classes')
-    ->key(array('pcid' => $pcid))
-    ->fields(array(
-      'name' => $form_state['values']['name'],
-      'description' => $form_state['values']['description'],
-    ))
-    ->execute();
+  $class = array(
+    'pcid' => $pcid,
+    'name' => $form_state['values']['name'],
+    'description' => $form_state['values']['description'],
+  );
+  uc_product_save_product_class($class);
 
   $type = new \stdClass();
   $type->type = $pcid;
@@ -506,7 +505,7 @@ function uc_product_class_form_submit($form, &$form_state) {
 
   uc_product_node_info(TRUE);
 
-  if ($result == MergeQuery::STATUS_INSERT) {
+  if ($is_new) {
     module_invoke_all('uc_product_class', $pcid, 'insert');
   }
   else {
@@ -560,9 +559,10 @@ function uc_product_class_delete_confirm_submit($form, &$form_state) {
   $type->custom = 1;
   node_type_save($type);
 
-  db_delete('uc_product_classes')
-    ->condition('pcid', $form_state['values']['pcid'])
-    ->execute();
+  $config = config('uc_product.settings');
+  $config->clear('classes.' . $form_state['values']['pcid']);
+  $config->save();
+
   module_invoke_all('uc_product_class', $form_state['values']['pcid'], 'delete');
   // TODO migrate This needed?
   uc_product_node_info(TRUE);

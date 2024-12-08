@@ -109,9 +109,10 @@ class UbercartTestHelper extends BackdropWebTestCase {
       'name' => $this->randomName(8),
       'description' => $this->randomName(8),
     );
-    $product_class = (object) $product_class;
 
-    backdrop_write_record('uc_product_classes', $product_class);
+    uc_product_save_product_class($product_class);
+
+    $product_class = (object) $product_class;
 
     return $product_class;
   }

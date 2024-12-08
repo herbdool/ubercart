@@ -271,14 +271,17 @@ function uc_product_node_info($reset = FALSE) {
 function uc_product_node_type_update($info) {
   $existing_type = !empty($info->old_type) ? $info->old_type : $info->type;
 
-  db_update('uc_product_classes')
-    ->fields(array(
-      'pcid' => $info->type,
-      'name' => $info->name,
-      'description' => $info->description,
-    ))
-    ->condition('pcid', $existing_type)
-    ->execute();
+  if ($existing_type != $info->type) {
+    $config = config('uc_product.settings');
+    $config->clear('classes.' . $existing_type);
+    $config->save();
+  }
+  $class = array(
+    'pcid' => $info->type,
+    'name' => $info->name,
+    'description' => $info->description,
+  );
+  uc_product_save_product_class($class);
 
   // Reset static variable data and load new info.
   uc_product_node_info(TRUE);
@@ -1592,10 +1595,13 @@ function uc_product_class_load($class_id = NULL, $reset = FALSE) {
   if (!isset($classes) || $reset) {
     // Load classes from database.
     $classes = array();
-    $result = db_query("SELECT * FROM {uc_product_classes}");
-    while ($class = $result->fetchObject()) {
-      $class->locked = FALSE;
-      $classes[$class->pcid] = $class;
+
+    $config = config('uc_product.settings');
+    $classes_config = $config->get('classes');
+
+    foreach($classes_config as $class) {
+      $class['locked'] = FALSE;
+      $classes[$class['pcid']] = (object) $class;
     }
 
     // Merge any module-defined classes.
@@ -1616,8 +1622,8 @@ function uc_product_class_load($class_id = NULL, $reset = FALSE) {
         $classes[$pcid] = (object) array_merge($class, (array) $classes[$pcid]);
       }
       else {
-        // Ensure the class info is saved in the database.
-        backdrop_write_record('uc_product_classes', $class);
+        // Ensure the class info is saved.
+        uc_product_save_product_class($class);
         $classes[$pcid] = (object) $class;
       }
 
@@ -1922,4 +1928,19 @@ function uc_product_autoload_info() {
     'uc_product_handler_field_weight' => 'views/uc_product_handler_field_weight.inc',
     'uc_product_handler_filter_product' => 'views/uc_product_handler_filter_product.inc',
   );
+}
+
+/**
+ * Save product class
+ *
+ * @param array $class
+ */
+function uc_product_save_product_class($class) {
+  $config = config('uc_product.settings');
+  $config->set('classes.' . $class['pcid'], array(
+    'pcid' => $class['pcid'],
+    'name' => $class['name'],
+    'description' => $class['description'],
+  ));
+  $config->save();
 }
