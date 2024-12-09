@@ -1954,7 +1954,7 @@ function uc_product_class_create($class, $is_new = FALSE) {
   }
   menu_rebuild();
 
-  backdrop_set_message(t('Product class created.'));
+  backdrop_set_message(t('Product class saved.'));
 }
 
 /**
