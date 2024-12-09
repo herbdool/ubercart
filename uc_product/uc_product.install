@@ -467,16 +467,13 @@ function uc_product_update_1007() {
   if (!db_table_exists('uc_product_classes')) {
     return;
   }
-  $classes = db_query("SELECT * FROM {uc_product_classes}");
+  $classes_db = db_query("SELECT * FROM {uc_product_classes}");
   $config = config('uc_product.settings');
 
-  foreach ($classes as $class) {
-    $config->set('classes.' . $class->pcid, array(
-      'pcid' => $class->pcid,
-      'name' => $class->name,
-      'description' => $class->description,
-    ));
+  foreach ($classes_db as $class) {
+    $classes[] = $class->pcid;
   }
+  $config->set('classes', $classes);
   $config->save();
 
   db_drop_table('uc_product_classes');

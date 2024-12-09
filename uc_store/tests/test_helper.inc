@@ -110,7 +110,7 @@ class UbercartTestHelper extends BackdropWebTestCase {
       'description' => $this->randomName(8),
     );
 
-    uc_product_save_product_class($product_class);
+    uc_product_save_product_class($product_class['pcid']);
 
     $product_class = (object) $product_class;
 

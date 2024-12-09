@@ -487,12 +487,7 @@ function uc_product_class_form_submit($form, &$form_state) {
   // Convert whitespace to underscores, and remove other non-alphanumeric characters.
   $pcid = preg_replace(array('/\s+/', '/\W/'), array('_', ''), strtolower($pcid));
 
-  $class = array(
-    'pcid' => $pcid,
-    'name' => $form_state['values']['name'],
-    'description' => $form_state['values']['description'],
-  );
-  uc_product_save_product_class($class);
+  uc_product_save_product_class($pcid);
 
   $type = new \stdClass();
   $type->type = $pcid;
@@ -560,7 +555,9 @@ function uc_product_class_delete_confirm_submit($form, &$form_state) {
   node_type_save($type);
 
   $config = config('uc_product.settings');
-  $config->clear('classes.' . $form_state['values']['pcid']);
+  $classes = $config->get('classes');
+  unset($classes[$form_state['values']['pcid']]);
+  $config->set('classes', $classes);
   $config->save();
 
   module_invoke_all('uc_product_class', $form_state['values']['pcid'], 'delete');

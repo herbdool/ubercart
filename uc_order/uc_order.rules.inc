@@ -535,7 +535,7 @@ function uc_order_condition_has_product_class($order, $product_classes, $require
 function uc_order_condition_has_product_class_classes_options() {
   $options = array();
 
-  $classes = config_get('uc_product.settings', 'classes');
+  $classes = uc_product_class_load();
   foreach ($classes as $class_id => $class) {
     $options += array($class_id => $class['name']);
   }
