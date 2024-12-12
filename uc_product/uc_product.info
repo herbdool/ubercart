@@ -3,8 +3,8 @@ description = Provides content types to represent items in an online store.
 package = Ubercart - core
 backdrop = 1.x
 type = module
-hidden = 1
 
+dependencies[] = ubercart
 dependencies[] = image
 
 ; Test cases

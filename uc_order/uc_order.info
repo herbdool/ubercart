@@ -3,8 +3,8 @@ description = Receives and manages orders through your website.
 package = Ubercart - core
 backdrop = 1.x
 type = module
-hidden = 1
 
+dependencies[] = ubercart
 dependencies[] = rules
 dependencies[] = views
 
