@@ -468,13 +468,16 @@ function uc_product_update_1007() {
     return;
   }
   $classes_db = db_query("SELECT * FROM {uc_product_classes}");
-  $config = config('uc_product.settings');
 
+  $classes = array();
   foreach ($classes_db as $class) {
     $classes[] = $class->pcid;
   }
-  $config->set('classes', $classes);
-  $config->save();
+  if (!empty($classes)) {
+    $config = config('uc_product.settings');
+    $config->set('classes', $classes);
+    $config->save();
+  }
 
   db_drop_table('uc_product_classes');
 }

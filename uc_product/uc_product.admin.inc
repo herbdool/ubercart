@@ -427,7 +427,7 @@ function uc_product_class_form($form, &$form_state, $class = NULL) {
       '#title' => t('Class ID'),
       '#required' => TRUE,
       '#maxlength' => 32,
-      '#description' => t('The machine-readable name of this content type. This text will be used for constructing the URL of the <em>create content</em> page for this content type. This name may consist only of lowercase letters, numbers, and underscores. Dashes are not allowed. Underscores will be converted into dashes when constructing the URL of the <em>create content</em> page. This name must be unique to this content type.'),
+      '#description' => t('The machine-readable name of this content type. This text will be used for constructing the URL of the <em>create content</em> page for this content type. This name may consist only of lowercase letters, numbers, and underscores. Dashes are not allowed. Underscores will be converted into dashes when constructing the URL of the <em>create content</em> page. This name must be unique to this content type. Existing !content_types can be added here and made into a product class.', array('!content_types' => l(t('content types'), 'admin/structure/types'))),
     );
   }
 

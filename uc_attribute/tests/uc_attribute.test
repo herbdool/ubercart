@@ -52,7 +52,7 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
     $this->assertTrue(uc_attribute_subject_exists($attribute->aid, 'product', $product->nid));
 
     // Test retrieval.
-    $loaded_attribute = uc_attribute_load($attribute->aid, $product->nid, 'product');
+    $loaded_attribute = uc_attribute_product_load($attribute->aid, $product->nid);
 
     // Check the attribute integrity.
     foreach (self::attributeFieldsToTest('product') as $field) {
@@ -80,7 +80,7 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
     $this->assertTrue(uc_attribute_subject_exists($attribute->aid, 'class', $product_class->pcid));
 
     // Test retrieval.
-    $loaded_attribute = uc_attribute_load($attribute->aid, $product_class->pcid, 'class');
+    $loaded_attribute = uc_attribute_class_load($attribute->aid, $product_class->pcid);
 
     // Check the attribute integrity.
     foreach (self::attributeFieldsToTest('class') as $field) {
@@ -557,7 +557,7 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
     $this->showVar($edit);
     $this->backdropPost('admin/store/products/classes/' . $class->pcid . '/attributes', $edit, t('Save changes'));
 
-    $attribute = uc_attribute_load($attribute->aid, $class->pcid, 'class');
+    $attribute = uc_attribute_class_load($attribute->aid, $class->pcid);
 
     $fields_ok = TRUE;
     foreach ($a as $field => $value) {

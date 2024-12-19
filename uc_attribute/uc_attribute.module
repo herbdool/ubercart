@@ -380,9 +380,20 @@ function uc_attribute_node_insert($node) {
   // SELECT $node->nid AS nid.
   $select->addExpression(':nid', 'nid', array(':nid' => $node->nid));
 
-  db_insert('uc_product_attributes')
-    ->from($select)
-    ->execute();
+  $config = config('uc_attribute.attributes');
+  $class_attributes = $config->get("classes.{$node->type}");
+  unset($class_attributes['options']);
+  unset($class_attributes['pcid']);
+  $class_attributes['nid'] = $node->nid;
+  foreach ($class_attributes as $attribute) {
+    db_insert('uc_product_attributes')
+      ->fields($class_attributes)
+      ->execute();
+  }
+
+  // db_insert('uc_product_attributes')
+  //   ->from($select)
+  //   ->execute();
 
   // Set options from class options.
   $select = db_select('uc_class_attribute_options', 'co')
@@ -396,8 +407,17 @@ function uc_attribute_node_insert($node) {
     ->condition('pcid', $node->type);
   $select->addExpression(':nid', 'nid', array(':nid' => $node->nid));
 
+  $class_options = array();
+  foreach($class_attributes as $class_attribute) {
+    $class_attribute['options']['nid'] = $node->nid;
+    unset($class_attribute['options']['oid']);
+    unset($class_attribute['options']['pcid']);
+    $class_options += $class_attribute['options'];
+  }
+
   db_insert('uc_product_options')
-    ->from($select)
+    //->from($select)
+    ->fields($class_options)
     ->execute();
 }
 
@@ -497,13 +517,16 @@ function uc_attribute_uc_order_product_alter(&$product, $order) {
 function uc_attribute_uc_product_class($type, $op) {
   switch ($op) {
     case 'delete':
-      db_delete('uc_class_attributes')
-        ->condition('pcid', $type)
-        ->execute();
+      $config = config('uc_attribute.attributes');
+      $config->clear("classes.{$type}");
+      $config->save();
+      // db_delete('uc_class_attributes')
+      //   ->condition('pcid', $type)
+      //   ->execute();
 
-      db_delete('uc_class_attribute_options')
-        ->condition('pcid', $type)
-        ->execute();
+      // db_delete('uc_class_attribute_options')
+      //   ->condition('pcid', $type)
+      //   ->execute();
 
       break;
   }
@@ -524,7 +547,7 @@ function uc_attribute_uc_product_alter(&$node) {
     $combination = array();
     foreach ($node->data['attributes'] as $aid => $value) {
       if (is_numeric($value)) {
-        $attribute = uc_attribute_load($aid, $node->nid, 'product');
+        $attribute = uc_attribute_product_load($aid, $node->nid);
         if ($attribute && ($attribute->display == 1 || $attribute->display == 2)) {
           $combination[$aid] = $value;
         }
@@ -604,6 +627,7 @@ function uc_attribute_uc_product_description($product) {
  *   An array of loaded attributes.
  */
 function uc_attribute_load_multiple(array $aids = array(), $type = '', $id = NULL) {
+  // @todo break up this function.
   $sql = uc_attribute_type_info($type);
 
   // Product/class attributes.
@@ -641,10 +665,78 @@ function uc_attribute_load_multiple(array $aids = array(), $type = '', $id = NUL
   // Load the attributes.
   $attributes = array();
   foreach ($aids as $aid) {
+    // Break this up.
     $attributes[$aid] = uc_attribute_load($aid, $id, $type);
   }
 
   return $attributes;
+}
+
+/**
+ * Loads an attribute.
+ *
+ * @param int $aid
+ *   The ID of the attribute.
+ * @param int $id
+ *   The ID of the product/class this attribute belongs to.
+  * @param string $type
+ *   The type of attribute. 'product', or 'class'. Any other type will fetch
+ *   a base attribute.
+ *
+ * @return object|false
+ *   The attribute object, or FALSE if it doesn't exist.
+ */
+function uc_attribute_load($aid, $id = NULL, $type = '') {
+  switch ($type) {
+    case 'product':
+      $attribute = uc_attribute_product_load($aid, $id);
+      break;
+    case 'class':
+      $attribute = uc_attribute_class_load($aid, $id);
+      break;
+    default:
+      $attribute = uc_attribute_global_load($aid);
+      break;
+  }
+
+  return $attribute;
+}
+
+/**
+ * Load attribute used in a class.
+ *
+ * @param int $aid
+ *   The ID of the attribute.
+ * @param int $pcid
+ *   The ID of the class this attribute belongs to.
+ *
+ * @return object|false
+ *   The attribute object, or FALSE if it doesn't exist.
+ */
+function uc_attribute_class_load($aid, $pcid) {
+  $config = config('uc_attribute.attributes');
+  $attribute = new stdClass();
+  $class_attribute = $config->get("classes.{$pcid}.{$aid}");
+  if ($class_attribute) {
+    // @todo Sort options by ordering, name.
+    $attribute = (object) $class_attribute;
+  }
+  else {
+    return FALSE;
+  }
+
+  if (isset($attribute->options)) {
+    foreach ($attribute->options as $option) {
+      $attribute->options[$option['oid']] = (object) $option;
+    }
+  }
+  else {
+    $attribute->options = array();
+  }
+
+  uc_attribute_translate($attribute);
+
+  return $attribute;
 }
 
 /**
@@ -654,71 +746,47 @@ function uc_attribute_load_multiple(array $aids = array(), $type = '', $id = NUL
  *   The ID of the attribute.
  * @param int $id
  *   The ID of the product/class this attribute belongs to.
- * @param string $type
- *   The type of attribute. 'product', or 'class'. Any other type will fetch
- *   a base attribute.
  *
  * @return object|false
  *   The attribute object, or FALSE if it doesn't exist.
  */
-function uc_attribute_load($aid, $id = NULL, $type = '') {
-  $sql = uc_attribute_type_info($type);
+function uc_attribute_product_load($aid, $id = NULL) {
+  // Read attribute data.
+  $config = config('uc_attribute.attributes');
 
-  switch ($type) {
-    case 'product':
-    case 'class':
-      // Read attribute data.
-      $query = db_select('uc_attributes', 'a')
-        ->fields('a', array('aid', 'name', 'description'))
-        ->condition('a.aid', $aid);
+  $query = db_select('uc_product_attributes', 'pa')
+    ->fields('pa', array('label', 'default_option', 'required', 'ordering', 'display', 'nid'));
+  $query->condition('pa.nid', $id);
 
-      $query->leftJoin($sql['attr_table'], 'pa', "a.aid = pa.aid AND pa.{$sql['id']} = :id", array(':id' => $id));
-      $query->fields('pa', array('label', 'default_option', 'required', 'ordering', 'display', $sql['id']));
-      $query->addField('a', 'label', 'default_label');
-      $query->addField('a', 'ordering', 'default_ordering');
-      $query->addField('a', 'required', 'default_required');
-      $query->addField('a', 'display', 'default_display');
+  $attribute = $query->execute()->fetchObject();
 
-      $attribute = $query->execute()->fetchObject();
-
-      // Don't try to build it further if it failed already.
-      if (!$attribute) {
-        return FALSE;
-      }
-
-      // Set any missing defaults.
-      foreach (array('ordering', 'required', 'display', 'label') as $field) {
-        if (isset($attribute->{"default_$field"}) && is_null($attribute->$field)) {
-          $attribute->$field = $attribute->{"default_$field"};
-        }
-      }
-      if (empty($attribute->label)) {
-        $attribute->label = $attribute->name;
-      }
-
-      // Read option data.
-      $query = db_select($sql['opt_table'], 'po')
-        ->fields('po', array($sql['id'], 'oid', 'cost', 'price', 'weight', 'ordering'));
-      $query->leftJoin('uc_attribute_options', 'ao', "po.oid = ao.oid AND po.{$sql['id']} = :id", array(':id' => $id));
-      $query->fields('ao', array('name', 'aid'))
-        ->condition('aid', $aid)
-        ->orderBy('po.ordering')
-        ->orderBy('ao.name');
-
-      $result = $query->execute();
-      break;
-
-    default:
-      // Read attribute and option data.
-      $attribute = db_query("SELECT * FROM {uc_attributes} WHERE aid = :aid", array(':aid' => $aid))->fetchObject();
-      $result = db_query("SELECT * FROM {uc_attribute_options} WHERE aid = :aid ORDER BY ordering, name", array(':aid' => $aid));
-
-      // Don't try to build it further if it failed already.
-      if (!$attribute) {
-        return FALSE;
-      }
-      break;
+  // Don't try to build it further if it failed already.
+  if (!$attribute) {
+    return FALSE;
   }
+
+  $attribute->aid = $aid;
+  $attribute->name = $config->get("attributes.{$aid}.name");
+  $attribute->description = $config->get("attributes.{$aid}.description");
+  $attribute->default_label = $config->get("attributes.{$aid}.label");
+  $attribute->default_ordering = $config->get("attributes.{$aid}.ordering");
+  $attribute->default_required = $config->get("attributes.{$aid}.required");
+  $attribute->default_display = $config->get("attributes.{$aid}.display");
+
+  // Set any missing defaults.
+  foreach (array('ordering', 'required', 'display', 'label') as $field) {
+    if (isset($attribute->{"default_$field"}) && is_null($attribute->$field)) {
+      $attribute->$field = $attribute->{"default_$field"};
+    }
+  }
+  if (empty($attribute->label)) {
+    $attribute->label = $attribute->name;
+  }
+
+  // Read option data.
+  $query = db_select('uc_product_options', 'po')
+    ->fields('po', array('nid', 'oid', 'cost', 'price', 'weight', 'ordering'));
+  $result = $query->execute();
 
   // Got an attribute?
   if ($attribute) {
@@ -726,9 +794,46 @@ function uc_attribute_load($aid, $id = NULL, $type = '') {
     $attribute->options = array();
     foreach ($result as $option) {
       $attribute->options[$option->oid] = $option;
+      $attribute->options[$option->oid]->aid = $aid;
+      $attribute->options[$option->oid]->name = $config->get("attributes.{$aid}.options.{$option->oid}.name");
     }
     uc_attribute_translate($attribute);
   }
+
+  return $attribute;
+}
+
+/**
+ * Loads an attribute.
+ *
+ * @param int $aid
+ *   The ID of the attribute.
+ * @return object|false
+ *   The attribute object, or FALSE if it doesn't exist.
+ */
+function uc_attribute_global_load($aid) {
+  $config = config('uc_attribute.attributes');
+  $attribute = new stdClass();
+  $global_attribute = $config->get("attributes.{$aid}");
+
+  if ($global_attribute) {
+    // @todo Sort options by ordering, name.
+    $attribute = (object) $global_attribute;
+  }
+  else {
+    return FALSE;
+  }
+
+  if (isset($attribute->options)) {
+    foreach ($attribute->options as $option) {
+      $attribute->options[$option['oid']] = (object) $option;
+    }
+  }
+  else {
+    $attribute->options = array();
+  }
+
+  uc_attribute_translate($attribute);
 
   return $attribute;
 }
@@ -758,7 +863,103 @@ function uc_attribute_load_product_attributes($nid) {
 function uc_attribute_save(&$attribute) {
   // Insert or update?
   $key = empty($attribute->aid) ? array() : 'aid';
-  return backdrop_write_record('uc_attributes', $attribute, $key);
+  return uc_attribute_attribute_save_config($attribute);
+  //return backdrop_write_record('uc_attributes', $attribute, $key);
+}
+
+/**
+ * Save attribute to config
+ *
+ * @param object $attribute
+ *
+ * @return bool
+ */
+function uc_attribute_attribute_save_config($attribute) {
+  $config = config('uc_attribute.attributes');
+  // @todo make this use a unique name instead.
+  if (empty($attribute->aid)) {
+    $attributes = $config->get('attributes');
+    $attribute_keys = is_array($attributes) ? array_keys($attributes) : array();
+    $attribute->aid = 1;
+    if (!empty($attribute_keys)) {
+      $attribute->aid = max($attribute_keys) + 1;
+    }
+  }
+  $config->set("attributes.{$attribute->aid}", $attribute);
+  $config->save();
+
+  // @todo actually return something useful.
+  return TRUE;
+}
+
+/**
+ * Save attribute to config
+ *
+ * @param object $option
+ */
+function uc_attribute_attribute_option_save_config($option) {
+  $config = config('uc_attribute.attributes');
+  // Create a unique oid across all attributes.
+  if (empty($option->oid)) {
+    $options = array();
+    $attributes = $config->get('attributes');
+    foreach ($attributes as $attribute) {
+      $options += !empty($attribute['options']) ? $attribute['options'] : array();
+    }
+    $option_keys = is_array($options) ? array_keys($options) : array();
+    $option->oid = 1;
+    if (!empty($option_keys)) {
+      $option->oid = max($option_keys) + 1;
+    }
+  }
+  $config->set("attributes.{$option->aid}.options.{$option->oid}", $option);
+  $config->save();
+}
+
+/**
+ * Delete attribute from config
+ *
+ * @param int $aid
+ */
+function uc_attribute_attribute_delete_config($aid) {
+  // Delete the product attributes and their options.
+  uc_attribute_subject_delete($aid, 'product');
+
+  $config = config('uc_attribute.attributes');
+  $classes = $config->get('classes');
+  foreach ($classes as $class_name => $class_info) {
+    $config->clear("classes.{$class_name}.{$aid}");
+  }
+  $config->clear("attributes.{$aid}");
+  $config->save();
+}
+
+/**
+ * Implements hook_config_create().
+ */
+function uc_attribute_config_create($staging_config) {
+  // Do we need to do anything?
+}
+
+/**
+ * Implements hook_config_update().
+ */
+function uc_attribute_config_update($staging_config, $active_config) {
+  // If a product class is deleted, delete the attributes on the class,
+  // and on the products.
+
+  // Compare attributes and remove class, product attributes that are
+  // removed.
+}
+
+/**
+ * Implements hook_config_delete().
+ */
+function uc_attribute_config_delete($active_config) {
+  // If product class is deleted, remove all attributes.
+
+  // Remove class, product attributes that are
+  // removed.
 }
 
 /**
@@ -798,7 +999,19 @@ function uc_attribute_delete($aid) {
  *   The attribute option object.
  */
 function uc_attribute_option_load($oid) {
-  return db_query("SELECT * FROM {uc_attribute_options} WHERE oid = :oid", array(':oid' => $oid))->fetchObject();
+  $config = config('uc_attribute.attributes');
+  $attributes = $config->get('attributes');
+  $option = new stdClass();
+  foreach ($attributes as $attribute) {
+    foreach ($attribute['options'] as $option_id => $option_info) {
+      if ($option_id == $oid) {
+        $option = (object) $option_info;
+        continue;
+      }
+    }
+  }
+  return $option;
+  //return db_query("SELECT * FROM {uc_attribute_options} WHERE oid = :oid", array(':oid' => $oid))->fetchObject();
 }
 
 /**
@@ -811,9 +1024,10 @@ function uc_attribute_option_load($oid) {
  *   The integer result from backdrop_write_record().
  */
 function uc_attribute_option_save(&$option) {
+  uc_attribute_attribute_option_save_config($option);
   // Insert or update?
-  $key = empty($option->oid) ? array() : 'oid';
-  return backdrop_write_record('uc_attribute_options', $option, $key);
+  // $key = empty($option->oid) ? array() : 'oid';
+  // return backdrop_write_record('uc_attribute_options', $option, $key);
 }
 
 /**
@@ -827,17 +1041,38 @@ function uc_attribute_option_save(&$option) {
  */
 function uc_attribute_option_delete($oid) {
   // Delete the class attribute options.
-  uc_attribute_subject_option_delete($oid, 'class');
+  //uc_attribute_subject_option_delete($oid, 'class');
+  uc_attribute_class_option_delete($oid);
 
   // Delete the product attribute options (and the adjustments!).
   uc_attribute_subject_option_delete($oid, 'product');
 
   // Delete base attributes and their options.
-  db_delete('uc_attribute_options')
-    ->condition('oid', $oid)
-    ->execute();
+  // db_delete('uc_attribute_options')
+  //   ->condition('oid', $oid)
+  //   ->execute();
+  uc_attribute_global_option_delete($oid);
 
   return SAVED_DELETED;
+}
+
+/**
+ * Delete attribute from config
+ *
+ * @param int $aid
+ * @param int $oid
+ */
+function uc_attribute_attribute_option_delete_config($aid, $oid) {
+  // Delete the product attribute options (and the adjustments!).
+  uc_attribute_subject_option_delete($oid, 'product');
+
+  $config = config('uc_attribute.attributes');
+  $classes = $config->get('classes');
+  foreach ($classes as $class_name => $class_info) {
+    $config->clear("classes.{$class_name}.{$aid}.options.{$oid}");
+  }
+  $config->clear("attributes.{$aid}.options.{$oid}");
+  $config->save();
 }
 
 /**
@@ -1032,6 +1267,50 @@ function uc_attribute_subject_option_delete($oid, $type, $id = NULL, $adjustment
 }
 
 /**
+ * Deletes a class attribute option.
+ *
+ * @param $oid
+ *   The base attribute's option ID.
+ * @param int $id
+ *   The product/class ID.
+ *
+ * @return int
+ *   The Backdrop SAVED_DELETED flag.
+ */
+function uc_attribute_class_option_delete($oid, $id = NULL) {
+  $config = config('uc_attribute.attributes');
+  $classes = $config->get('classes');
+  foreach ($classes as $class_name => $class_info) {
+    foreach ($class_info as $aid => $attribute_info) {
+      foreach ($attribute_info['options'] as $oid => $option) {
+        $config->clear("classes.{$class_name}.{$aid}.options.{$oid}");
+      }
+    }
+  }
+  $config->save();
+}
+
+/**
+ * Deletes a global attribute option.
+ *
+ * @param $oid
+ *   The base attribute's option ID.
+ *
+ * @return int
+ *   The Backdrop SAVED_DELETED flag.
+ */
+function uc_attribute_global_option_delete($oid) {
+  $config = config('uc_attribute.attributes');
+  $attributes = $config->get('attributes');
+  foreach ($attributes as $aid => $attribute_info) {
+    foreach ($attribute_info['options'] as $oid => $option) {
+      $config->clear("attributes.{$aid}.options.{$oid}");
+    }
+  }
+  $config->save();
+}
+
+/**
  * Deletes an attribute adjustment.
  *
  * @param array $fields
@@ -1160,9 +1439,60 @@ function uc_attribute_type_info($type) {
 function uc_product_get_attributes($nid) {
   $attributes = array();
 
+  // @todo add global attribute names after.
   $result = db_query("SELECT upa.aid FROM {uc_product_attributes} upa LEFT JOIN {uc_attributes} ua ON upa.aid = ua.aid WHERE upa.nid = :nid ORDER BY upa.ordering, ua.name", array(':nid' => $nid));
   foreach ($result as $attribute) {
-    $attributes[$attribute->aid] = uc_attribute_load($attribute->aid, $nid, 'product');
+    $attributes[$attribute->aid] = uc_attribute_product_load($attribute->aid, $nid);
+  }
+
+  return $attributes;
+}
+
+/**
+ * Loads all attributes associated with a product class.
+ *
+ * @param int $pcid
+ *   The product class id.
+ *
+ * @return array
+ *   An aarray of attribute objects.
+ */
+function uc_class_get_attributes($pcid) {
+  $attributes = array();
+
+  // $result = db_query("SELECT uca.aid FROM {uc_class_attributes} uca LEFT JOIN {uc_attributes} ua ON uca.aid = ua.aid WHERE uca.pcid = :type ORDER BY uca.ordering, ua.name", array(':type' => $pcid));
+  // foreach ($result as $attribute) {
+  //   $attributes[$attribute->aid] = uc_attribute_class_load($attribute->aid, $pcid);
+  // }
+
+  $config = config('uc_attribute.attributes');
+  $class_attributes = $config->get("classes.{$pcid}");
+  foreach ($class_attributes as $aid => $class_attribute) {
+    $attributes[$aid] = (object) $class_attribute;
+  }
+
+  return $attributes;
+}
+
+/**
+ * Loads all attributes associated with a product class.
+ *
+ * @param int $pcid
+ *   The product class id.
+ *
+ * @return array
+ *   Array of attributes objects.
+ */
+function uc_class_get_attributes_config($pcid) {
+  $attributes = array();
+
+  $config = config('uc_attribute.attributes');
+  $class_attributes = $config->get("classes.{$pcid}");
+  if ($class_attributes) {
+    $attributes = $class_attributes;
+    foreach ($class_attributes as $aid => $class_attribute) {
+      $attributes[$aid] = (object) $class_attribute;
+    }
   }
 
   return $attributes;
@@ -1177,15 +1507,23 @@ function uc_product_get_attributes($nid) {
  * @return array
  *   The attributes.
  */
-function uc_class_get_attributes($pcid) {
-  $attributes = array();
+function uc_class_get_attributes_options_config($pcid) {
+  $class_attributes = array();
 
-  $result = db_query("SELECT uca.aid FROM {uc_class_attributes} uca LEFT JOIN {uc_attributes} ua ON uca.aid = ua.aid WHERE uca.pcid = :type ORDER BY uca.ordering, ua.name", array(':type' => $pcid));
-  foreach ($result as $attribute) {
-    $attributes[$attribute->aid] = uc_attribute_load($attribute->aid, $pcid, 'class');
+  $config = config('uc_attribute.attributes');
+  // $attributes = $config->get("attributes");
+  $class_attributes = $config->get("classes.{$pcid}");
+  foreach ($class_attributes as $id => $attribute) {
+    if (!empty($attribute['default_option'])) {
+      $default_option = $attribute['options'][$attribute['default_option']];
+      // $attributes[$id]['default_label'] = $default_option['name'];
+      // $attributes[$id]['default_ordering'] = $default_option['ordering'];
+      // $attributes[$id]['default_required'] = $default_option['required'];
+      // $attributes[$id]['default_display'] = $default_option['display'];
+    }
   }
 
-  return $attributes;
+  return $class_attributes;
 }
 
 /**
@@ -1561,11 +1899,4 @@ function uc_attribute_translate(&$attribute) {
       $option->name = i18n_string('uc_attribute:option:' . $option->oid . ':name', $option->name);
     }
   }
-}
-
-/**
- * Implements hook_autoload_info().
- */
-function uc_attribute_autoload_info() {
-  return array();
 }
