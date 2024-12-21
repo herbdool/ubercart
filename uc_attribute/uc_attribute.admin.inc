@@ -32,16 +32,29 @@ function uc_attribute_admin() {
 
   $display_types = _uc_attribute_display_types();
 
-  $query = db_select('uc_attributes', 'a')->extend('PagerDefault')->extend('TableSort')
-    ->fields('a', array('aid', 'name', 'label', 'required', 'ordering', 'display'))
-    ->orderByHeader($header)
-    ->limit(30);
+  $config = config('uc_attribute.attributes');
+  $attributes = $config->get('attributes');
+  if (!$attributes) {
+    $attributes = array();
+  }
+
+  // $order = tablesort_get_order($header);
+  // $sort = tablesort_get_sort($header);
+  // @see https://drupal.stackexchange.com/questions/14889/can-tablesort-be-used-without-a-query
+  //$sorted_attributes = my_array_sort($attributes, $order['sql'], $sort);
+
+  $total = $attributes ? count($attributes) : 0;
+  $number_per_page = 30;
+  $page = pager_default_initialize($total, $number_per_page);
+  $offset = $number_per_page * $page;
+  $current_page_items = array_slice($attributes, $offset, $number_per_page);
 
   $rows = array();
 
-  $result = $query->execute();
-  foreach ($result as $attr) {
-    $attr->options = db_query('SELECT COUNT(*) FROM {uc_attribute_options} WHERE aid = :aid', array(':aid' => $attr->aid))->fetchField();
+  //$result = $query->execute();
+  foreach ($current_page_items as $attr) {
+    $attr = (object) $attr;
+    //$attr->options = db_query('SELECT COUNT(*) FROM {uc_attribute_options} WHERE aid = :aid', array(':aid' => $attr->aid))->fetchField();
     if (empty($attr->label)) {
       $attr->label = $attr->name;
     }
@@ -67,9 +80,16 @@ function uc_attribute_admin() {
       check_plain($attr->label),
       $attr->required == 1 ? t('Yes') : t('No'),
       $attr->ordering,
-      $attr->options,
+      isset($attr->options) ? $attr->options : '',
       $display_types[$attr->display],
       backdrop_render($operations),
+      // array('data' => array('name' => check_plain($attr->name))),
+      // array('data' => array('label' => check_plain($attr->label))),
+      // array('data' => array('required' => $attr->required == 1 ? t('Yes') : t('No'))),
+      // array('data' => array('ordering' => $attr->ordering)),
+      // array('data' => array('options' => $attr->options)),
+      // array('data' => array('display' => $display_types[$attr->display])),
+      // array('data' => array('operations' => backdrop_render($operations))),
     );
   }
 
@@ -180,21 +200,19 @@ function uc_attribute_form_submit($form, &$form_state) {
     'display' => $form_state['values']['display'],
     'ordering' => $form_state['values']['ordering'],
   );
-  uc_attribute_attribute_save_config($attribute);
+  $attribute = uc_attribute_attribute_save($attribute);
 
   if (!empty($form_state['values']['aid'])) {
-    backdrop_write_record('uc_attributes', $form_state['values'], 'aid');
     $form_state['redirect'] = 'admin/store/products/attributes';
   }
   else {
-    backdrop_write_record('uc_attributes', $form_state['values']);
     if ($form_state['values']['display'] == 0) {
       // No options needed/allowed for Textfield display type.
       $form_state['redirect'] = 'admin/store/products/attributes';
     }
     else {
       // All other display types we redirect to add options.
-      $form_state['redirect'] = 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options';
+      $form_state['redirect'] = 'admin/store/products/attributes/' . $attribute->aid . '/options';
     }
   }
 }
@@ -230,45 +248,13 @@ function uc_attribute_delete_confirm($form, &$form_state, $attribute) {
  *
  * @see uc_attribute_delete_confirm()
  */
-function uc_attribute_delete_confirm_submit($form, &$form_state) {
+function uc_attribute_delete_confirm_submit($form, &$form_state) { // Is this only for the global attribute?
   if ($form_state['values']['confirm']) {
-    $attribute = uc_attribute_load($form_state['values']['aid']);
-    $options = array_keys($attribute->options);
+    $deleted = uc_attribute_global_attribute_cascade_delete($form_state['values']['aid']);
 
-    if ($options) {
-      db_delete('uc_class_attribute_options')
-        ->condition('oid', $options, 'IN')
-        ->execute();
-
-      db_delete('uc_product_options')
-        ->condition('oid', $options, 'IN')
-        ->execute();
+    if ($deleted) {
+      backdrop_set_message(t('Product attribute deleted.'));
     }
-
-    if ($nodes = db_query("SELECT nid FROM {uc_product_attributes} WHERE aid = :aid", array(':aid' => $attribute->aid))->fetchCol()) {
-      db_delete('uc_product_adjustments')
-        ->condition('nid', $nodes, 'IN')
-        ->execute();
-    }
-
-    db_delete('uc_class_attributes')
-      ->condition('aid', $form_state['values']['aid'])
-      ->execute();
-
-    db_delete('uc_product_attributes')
-      ->condition('aid', $form_state['values']['aid'])
-      ->execute();
-
-    db_delete('uc_attribute_options')
-      ->condition('aid', $form_state['values']['aid'])
-      ->execute();
-
-    db_delete('uc_attributes')
-      ->condition('aid', $form_state['values']['aid'])
-      ->execute();
-    uc_attribute_attribute_delete_config($form_state['values']['aid']);
-
-    backdrop_set_message(t('Product attribute deleted.'));
 
     $form_state['redirect'] = 'admin/store/products/attributes';
   }
@@ -347,12 +333,12 @@ function uc_attribute_options_form_submit($form, &$form_state) {
   $values = $form_state['values'];
   foreach ($values['options'] as $oid => $option) {
     $config->set('attributes.' . $values['aid'] . '.options.' . $oid . '.' . 'ordering', $option['ordering']);
-    db_update('uc_attribute_options')
-      ->fields(array(
-        'ordering' => $option['ordering'],
-      ))
-      ->condition('oid', $oid)
-      ->execute();
+    // db_update('uc_attribute_options')
+    //   ->fields(array(
+    //     'ordering' => $option['ordering'],
+    //   ))
+    //   ->condition('oid', $oid)
+    //   ->execute();
   }
   $config->save();
 
@@ -548,15 +534,13 @@ function uc_attribute_option_form_submit($form, &$form_state) {
     'weight' => $form_state['values']['weight'],
     'ordering' => $form_state['values']['ordering'],
   );
-  uc_attribute_attribute_option_save_config($option);
+  uc_attribute_attribute_option_save($option);
   if (!isset($form_state['values']['oid'])) {
-    backdrop_write_record('uc_attribute_options', $form_state['values']);
     backdrop_set_message(t('Created new option %option.', array('%option' => $form_state['values']['name'])));
     watchdog('uc_attribute', 'Created new option %option.', array('%option' => $form_state['values']['name']), WATCHDOG_NOTICE, 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options/add');
     $form_state['redirect'] = 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options/add';
   }
   else {
-    backdrop_write_record('uc_attribute_options', $form_state['values'], array('aid', 'oid'));
     backdrop_set_message(t('Updated option %option.', array('%option' => $form_state['values']['name'])));
     watchdog('uc_attribute', 'Updated option %option.', array('%option' => $form_state['values']['name']), WATCHDOG_NOTICE, 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options/' . $form_state['values']['oid']);
     $form_state['redirect'] = 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options';
@@ -597,33 +581,7 @@ function uc_attribute_option_delete_confirm($form, &$form_state, $attribute, $op
  */
 function uc_attribute_option_delete_confirm_submit($form, &$form_state) {
   if ($form_state['values']['confirm']) {
-    $match = 'i:' . $form_state['values']['aid'] . ';s:' . strlen($form_state['values']['oid']) . ':"' . $form_state['values']['oid'] . '";';
-
-    db_delete('uc_product_adjustments')
-      ->condition('combination', '%' . db_like($match) . '%', 'LIKE')
-      ->execute();
-
-    $select = db_select('uc_attribute_options', 'ao')
-      ->where('{uc_class_attribute_options}.oid = ao.oid')
-      ->condition('ao.oid', $form_state['values']['oid']);
-    $select->addExpression('1');
-    db_delete('uc_class_attribute_options')
-      ->condition('', $select, 'EXISTS')
-      ->execute();
-
-    $select = db_select('uc_attribute_options', 'ao')
-      ->where('{uc_product_options}.oid = ao.oid')
-      ->condition('ao.oid', $form_state['values']['oid']);
-    $select->addExpression('1');
-    db_delete('uc_product_options')
-      ->condition('', $select, 'EXISTS')
-      ->execute();
-
-    db_delete('uc_attribute_options')
-      ->condition('oid', $form_state['values']['oid'])
-      ->execute();
-
-    uc_attribute_attribute_option_delete_config($form_state['values']['aid'], $form_state['values']['oid']);
+    uc_attribute_global_option_cascade_delete($form_state['values']['aid'], $form_state['values']['oid']);
   }
 
   $form_state['redirect'] = 'admin/store/products/attributes/' . $form_state['values']['aid'] . '/options';
@@ -646,7 +604,6 @@ function uc_object_attributes_form($form, &$form_state, $object, $type, $view = 
         backdrop_goto('admin/store/products/classes/' . $id);
       }
       backdrop_set_title($class->name);
-      //$attributes = uc_class_get_attributes($id);
       $attributes = uc_class_get_attributes_config($id);
       break;
 
@@ -732,12 +689,6 @@ function uc_object_attributes_form($form, &$form_state, $object, $type, $view = 
   elseif ($view == 'add') {
     // Get list of attributes not already assigned to this node or class.
     $unused_attributes = array();
-    // $result = db_query("SELECT a.aid, a.name, a.label FROM {uc_attributes} a LEFT JOIN {uc_attribute_options} ao ON a.aid = ao.aid GROUP BY a.aid, a.name, a.label ORDER BY a.name");
-    // foreach ($result as $attribute) {
-    //   if (!in_array($attribute->aid, $used_aids)) {
-    //     $unused_attributes[$attribute->aid] = $attribute->name;
-    //   }
-    // }
     $config = config('uc_attribute.attributes');
     $attributes_global = $config->get('attributes');
     foreach ($attributes_global as $attribute_global) {
@@ -847,15 +798,14 @@ function theme_uc_object_attributes_form($variables) {
  */
 function uc_object_attributes_form_submit($form, &$form_state) {
   if ($form_state['values']['type'] == 'product') {
-    $attr_table = 'uc_product_attributes';
     $opt_table = 'uc_product_options';
     $id = 'nid';
   }
   elseif ($form_state['values']['type'] == 'class') {
-    $attr_table = 'uc_class_attributes';
-    $opt_table = 'uc_class_attribute_options';
     $id = 'pcid';
   }
+
+  $config = config('uc_attribute.attributes');
 
   // Attributes list: for the product node or class.
   if ($form_state['values']['view'] == 'overview' && is_array($form_state['values']['attributes'])) {
@@ -868,7 +818,14 @@ function uc_object_attributes_form_submit($form, &$form_state) {
       else {
         $attribute['aid'] = $aid;
         $attribute[$id] = $form_state['values']['id'];
-        backdrop_write_record($attr_table, $attribute, array('aid', $id));
+        if ($form_state['values']['type'] == 'product') {
+          backdrop_write_record('uc_product_attributes', $attribute, array('aid', $id));
+        }
+        elseif ($form_state['values']['type'] == 'class') {
+          unset($attribute['remove']);
+          $config->set("classes.{$form_state['values']['id']}.{$aid}", $attribute);
+          $config->save();
+        }
         $changed = TRUE;
       }
     }
@@ -877,23 +834,38 @@ function uc_object_attributes_form_submit($form, &$form_state) {
     if (isset($remove_aids)) {
       $id_value = $form_state['values']['id'];
 
-      $select = db_select('uc_attribute_options', 'ao')
-        ->fields('ao', array('oid'))
-        ->condition('ao.aid', $remove_aids, 'IN');
-      db_delete($opt_table)
-        ->condition('oid', $select, 'IN')
-        ->condition($id, $id_value)
-        ->execute();
-
-      db_delete($attr_table)
-        ->condition($id, $id_value)
-        ->condition('aid', $remove_aids, 'IN')
-        ->execute();
+      // @todo replace with standard separate functions for product and class.
+      // Class will need to cascade to products and delete related ones too.
 
       if ($form_state['values']['type'] == 'product') {
+        // $select = db_select('uc_attribute_options', 'ao')
+        //   ->fields('ao', array('oid'))
+        //   ->condition('ao.aid', $remove_aids, 'IN');
+
+        $remove_oids = array();
+        foreach ($remove_aids as $aid) {
+          $options = $config->get("attributes.{$aid}.options");
+          $remove_oids += array_keys($options);
+        }
+        db_delete('uc_product_options')
+          ->condition('oid', $remove_oids, 'IN')
+          ->condition('nid', $id_value)
+          ->execute();
+
+        db_delete('uc_product_attributes')
+          ->condition('nid', $id_value)
+          ->condition('aid', $remove_aids, 'IN')
+          ->execute();
+
         db_delete('uc_product_adjustments')
           ->condition('nid', $id_value)
           ->execute();
+      }
+      elseif ($form_state['values']['type'] == 'class') {
+        foreach ($remove_aids as $aid) {
+          $config->clear("classes.{$id_value}.{$aid}");
+        }
+        $config->save();
       }
 
       backdrop_set_message(format_plural(count($remove_aids), '1 attribute has been removed.', '@count attributes have been removed.'));
@@ -908,12 +880,14 @@ function uc_object_attributes_form_submit($form, &$form_state) {
     foreach (array_filter($form_state['values']['add_attributes']) as $aid) {
       // Enable all options for added attributes.
       // $attribute = uc_attribute_load($aid);
-      $attribute = (object) config_get('uc_attribute.attributes', 'attributes.' . $aid);
+      $attribute = (object) $config->get("attributes.{$aid}");
       $oid = 0;
       if (isset($attribute->options)) {
         foreach ($attribute->options as $option) {
           $option[$id] = $form_state['values']['id'];
-          backdrop_write_record($opt_table, $option);
+          if ($form_state['values']['type'] == 'product') {
+            backdrop_write_record('uc_product_options', $option);
+          }
           $option['aid'] = $aid;
         }
         // Make the first option (if any) the default.
@@ -922,15 +896,8 @@ function uc_object_attributes_form_submit($form, &$form_state) {
         }
       }
 
-      $select = db_select('uc_attributes', 'a')
-        ->condition('aid', $aid);
-      $select->addExpression(':id', $id, array(':id' => $form_state['values']['id']));
-      $select->addField('a', 'aid');
-      $select->addField('a', 'label');
-      $select->addField('a', 'ordering');
-      $select->addExpression(':oid', 'default_option', array(':oid' => $oid));
-      $select->addField('a', 'required');
-      $select->addField('a', 'display');
+      $attribute_global = $config->get("attributes.{$aid}");
+      $attribute_global['default_option'] = $oid;
 
       $attribute->default_option = $oid;
 
@@ -941,19 +908,22 @@ function uc_object_attributes_form_submit($form, &$form_state) {
         unset($product_attribute->name);
         unset($product_attribute->description);
         db_insert('uc_product_attributes')
-          //->from($select)
           ->fields((array) $product_attribute)
           ->execute();
       }
       elseif ($form_state['values']['type'] == 'class') {
-        // Temporary:
-        // db_insert($attr_table)
-        //   ->from($select)
-        //   ->execute();
+        $class_attribute = $attribute;
+        $class_attribute->pcid = $form_state['values']['id'];
+        $class_attribute->default_option = $oid;
+        unset($class_attribute->name);
+        unset($class_attribute->description);
+        unset($class_attribute->remove);
 
-        $attribute->pcid = $form_state['values']['id'];
-        config_set('uc_attribute.attributes', 'classes.' . $attribute->pcid . '.' . $aid, $attribute);
+        $config->set("classes.{$class_attribute->pcid}.{$aid}", $class_attribute);
       }
+    }
+    if ($form_state['values']['type'] == 'class') {
+      $config->save();
     }
     $num = count(array_filter($form_state['values']['add_attributes']));
     if ($num > 0) {
@@ -1006,7 +976,7 @@ function uc_object_options_form($form, &$form_state, $object, $type) {
 
   foreach ($attributes as $aid => $attribute) {
     if ($type == 'class') {
-      $attribute = (object) $attribute;
+      $attribute = uc_attribute_class_load($aid, $id);
     }
     $form['attributes'][$aid]['name'] = array(
       '#markup' => check_plain($attribute->name),
@@ -1308,11 +1278,9 @@ function uc_object_options_form_validate($form, &$form_state) {
  */
 function uc_object_options_form_submit($form, &$form_state) {
   if ($form_state['values']['type'] == 'product') {
-    $opt_table = 'uc_product_options';
     $id = 'nid';
   }
   elseif ($form_state['values']['type'] == 'class') {
-    $opt_table = 'uc_class_attribute_options';
     $id = 'pcid';
     $config = config('uc_attribute.attributes');
   }
@@ -1327,8 +1295,6 @@ function uc_object_options_form_submit($form, &$form_state) {
           ->condition('nid', $form_state['values']['id'])
           ->condition('aid', $attribute['aid'])
           ->execute();
-
-        $opt_table = 'uc_product_options';
       }
       elseif ($form_state['values']['type'] == 'class') {
         $config->set('classes.' . $form_state['values']['id'] . '.' . $attribute['aid'] . '.default_option', $attribute['default']);
@@ -1337,7 +1303,7 @@ function uc_object_options_form_submit($form, &$form_state) {
 
     if (isset($attribute['options'])) {
       if ($form_state['values']['type'] == 'product') {
-        db_delete($opt_table)
+        db_delete('uc_product_options')
         ->condition($id, $form_state['values']['id'])
         ->condition('oid', array_keys($attribute['options']), 'IN')
         ->execute();
@@ -1349,7 +1315,7 @@ function uc_object_options_form_submit($form, &$form_state) {
             $option[$id] = $form_state['values']['id'];
             $option['oid'] = $oid;
 
-            backdrop_write_record($opt_table, $option);
+            backdrop_write_record('uc_product_options', $option);
           }
           else {
             $aid = $attribute['aid'];
@@ -1365,7 +1331,6 @@ function uc_object_options_form_submit($form, &$form_state) {
             $option[$id] = $form_state['values']['id'];
             $option['oid'] = $oid;
 
-            //backdrop_write_record($opt_table, $option);
             $config->set('classes.' . $form_state['values']['id'] . '.' . $attribute['aid'] . '.options.' . $oid, $option);
           }
         }
