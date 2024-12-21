@@ -901,7 +901,7 @@ function uc_attribute_global_load($aid) {
  *   The array of attribute objects.
  */
 function uc_attribute_load_product_attributes($nid) {
-  return uc_attribute_load_multiple(array(), 'product', $nid);
+  return uc_attribute_product_load_multiple(array(), $nid);
 }
 
 /**
