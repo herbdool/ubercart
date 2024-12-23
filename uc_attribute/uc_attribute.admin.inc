@@ -38,10 +38,11 @@ function uc_attribute_admin() {
     $attributes = array();
   }
 
-  // $order = tablesort_get_order($header);
-  // $sort = tablesort_get_sort($header);
+  // $order = tablesort_get_order($header); // array('name' => 'Name', 'sql' => 'a.name');
+  // $sort = tablesort_get_sort($header); // 'asc'
   // @see https://drupal.stackexchange.com/questions/14889/can-tablesort-be-used-without-a-query
   //$sorted_attributes = my_array_sort($attributes, $order['sql'], $sort);
+  // backdrop_sort($attributes, array('attr_ordering' => SORT_NUMERIC, 'ordering' => SORT_NUMERIC));
 
   $total = $attributes ? count($attributes) : 0;
   $number_per_page = 30;
@@ -51,10 +52,8 @@ function uc_attribute_admin() {
 
   $rows = array();
 
-  //$result = $query->execute();
   foreach ($current_page_items as $attr) {
     $attr = (object) $attr;
-    //$attr->options = db_query('SELECT COUNT(*) FROM {uc_attribute_options} WHERE aid = :aid', array(':aid' => $attr->aid))->fetchField();
     if (empty($attr->label)) {
       $attr->label = $attr->name;
     }
@@ -83,13 +82,6 @@ function uc_attribute_admin() {
       isset($attr->options) ? $attr->options : '',
       $display_types[$attr->display],
       backdrop_render($operations),
-      // array('data' => array('name' => check_plain($attr->name))),
-      // array('data' => array('label' => check_plain($attr->label))),
-      // array('data' => array('required' => $attr->required == 1 ? t('Yes') : t('No'))),
-      // array('data' => array('ordering' => $attr->ordering)),
-      // array('data' => array('options' => $attr->options)),
-      // array('data' => array('display' => $display_types[$attr->display])),
-      // array('data' => array('operations' => backdrop_render($operations))),
     );
   }
 
@@ -333,12 +325,6 @@ function uc_attribute_options_form_submit($form, &$form_state) {
   $values = $form_state['values'];
   foreach ($values['options'] as $oid => $option) {
     $config->set('attributes.' . $values['aid'] . '.options.' . $oid . '.' . 'ordering', $option['ordering']);
-    // db_update('uc_attribute_options')
-    //   ->fields(array(
-    //     'ordering' => $option['ordering'],
-    //   ))
-    //   ->condition('oid', $oid)
-    //   ->execute();
   }
   $config->save();
 
@@ -838,10 +824,6 @@ function uc_object_attributes_form_submit($form, &$form_state) {
       // Class will need to cascade to products and delete related ones too.
 
       if ($form_state['values']['type'] == 'product') {
-        // $select = db_select('uc_attribute_options', 'ao')
-        //   ->fields('ao', array('oid'))
-        //   ->condition('ao.aid', $remove_aids, 'IN');
-
         $remove_oids = array();
         foreach ($remove_aids as $aid) {
           $options = $config->get("attributes.{$aid}.options");

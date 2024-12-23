@@ -248,15 +248,17 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
     $this->assertFalse(uc_attribute_load($attribute->aid), t('Attribute was deleted properly.'));
 
     // Sanity check!
-    $this->assertFalse(db_query("SELECT aid FROM {uc_attributes} WHERE aid = :aid", array(':aid' => $attribute->aid))->fetchField(), t('Attribute was seriously deleted properly!'));
+    $attribute_from_config = config_get('uc_attribute.attributes', "attributes.{$attribute->aid}");
+    $this->assertFalse(!empty($attribute_from_config), t('Attribute was seriously deleted properly!'));
 
     // Test that options were deleted properly.
     foreach ($options as $option) {
-      $this->assertFalse(db_query("SELECT oid FROM {uc_attribute_options} WHERE oid = :oid", array(':oid' => $option->oid))->fetchField(), t('Make sure options are deleted properly.'));
+      $option_from_config = config_get('uc_attribute.attributes', "attributes.{$attribute->aid}.options.{$option->oid}");
+      $this->assertFalse(!empty($option_from_config), t('Make sure options are deleted properly.'));
     }
 
     // Test the deletion applied to products too.
-    $loaded_product_attributes = uc_attribute_load_multiple(array(), 'product', $product->nid);
+    $loaded_product_attributes = uc_attribute_product_load_multiple(array(), $product->nid);
 
     // We'll get all in $loaded_attributes above, without the original. (Which
     // has been deleted.)
@@ -334,7 +336,14 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
     $types = _uc_attribute_display_types();
     $this->assertRaw('<td>' . $types[$edit['display']] . '</td>', t('Verify display field.'));
 
-    $aid = db_query("SELECT aid FROM {uc_attributes} WHERE name = :name", array(':name' => $edit['name']))->fetchField();
+    $config = config('uc_attribute.attributes');
+    $attributes = $config->get('attributes');
+    foreach ($attributes as $attribute_aid => $attribute) {
+      if ($attribute['name'] = $edit['name']) {
+        $aid = $attribute_aid;
+      }
+    }
+
     $this->assertTrue($aid, t('Attribute was created.'));
 
     $attribute = uc_attribute_load($aid);
@@ -465,7 +474,7 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
 
     $this->backdropPost('admin/store/products/attributes/' . $attribute->aid . '/options/add', $edit, t('Submit'));
 
-    $option = db_query("SELECT * FROM {uc_attribute_options} WHERE aid = :aid", array(':aid' => $attribute->aid))->fetchObject();
+    $option = config_get('uc_attribute.attributes', "attributes.{$attribute->aid}.options");
 
     $fields_ok = TRUE;
     foreach ($edit as $field => $value) {
@@ -853,12 +862,14 @@ class UbercartAttributeTestCase extends UbercartTestHelper {
    * @param $save
    */
   public static function createAttributeOption($data = array(), $save = TRUE) {
-    $max_aid = db_select('uc_attributes', 'a')
-      ->fields('a', array('aid'))
-      ->orderBy('aid', 'DESC')
-      ->range(0, 1)
-      ->execute()
-      ->fetchField();
+    $config = config('uc_attribute.attributes');
+    $attributes = $config->get('attributes');
+    $attribute_keys = is_array($attributes) ? array_keys($attributes) : array();
+    $max_aid = 1;
+    if (!empty($attribute_keys)) {
+      $max_aid = max($attribute_keys);
+    }
+
     $option = $data + array(
       'aid' => $max_aid,
       'name' => BackdropWebTestCase::randomName(8),

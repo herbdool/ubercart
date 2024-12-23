@@ -630,7 +630,7 @@ function uc_attribute_uc_product_description($product) {
  * @return array
  *   An array of loaded attributes.
  */
-function uc_attribute_class_load_multiple(array $aids = array(), $pcid) {
+function uc_attribute_class_load_multiple(array $aids, $pcid) {
   $config = config('uc_attribute.attributes');
   $class_attributes = array();
   foreach($aids as $aid) {
@@ -639,7 +639,7 @@ function uc_attribute_class_load_multiple(array $aids = array(), $pcid) {
     $class_attributes[$aid] = (object) $attr;
   }
 
-  // @todo order by ordering and name.
+  // @todo order by ordering and name. Does the following work?
   backdrop_sort($result, array('ordering' => SORT_NUMERIC, 'name' => SORT_STRING));
 
   return $class_attributes;
@@ -669,10 +669,7 @@ function uc_attribute_product_load_multiple(array $aids = array(), $nid = NULL) 
     ->fields('pa', array('aid'))
     ->condition("pa.nid", $nid);
 
-  //$query->leftJoin('uc_attributes', 'ua', 'uca.aid = ua.aid');
-
   $query->orderBy('uca.ordering');
-  //$query->orderBy('ua.name');
 
   // Filter by the attribute IDs requested.
   if (!empty($aids)) {
@@ -1079,7 +1076,6 @@ function uc_attribute_option_load($oid) {
     }
   }
   return $option;
-  //return db_query("SELECT * FROM {uc_attribute_options} WHERE oid = :oid", array(':oid' => $oid))->fetchObject();
 }
 
 /**
@@ -1114,9 +1110,6 @@ function uc_attribute_option_delete($oid) {
   uc_attribute_subject_option_delete($oid, 'product');
 
   // Delete base attributes and their options.
-  // db_delete('uc_attribute_options')
-  //   ->condition('oid', $oid)
-  //   ->execute();
   uc_attribute_global_option_delete($oid);
 
   return SAVED_DELETED;
@@ -1304,9 +1297,8 @@ function uc_attribute_class_attribute_delete($aid) {
  *   The Backdrop SAVED_DELETED flag.
  */
 function uc_attribute_product_attribute_delete($aid, $id = NULL) {
-  $query = db_select('uc_attribute_options', 'a')
-    ->fields('a', array('oid'));
-  $query->join('uc_product_options', 'subject', 'a.oid = subject.oid');
+  $query = db_select('uc_product_options', 'pa')
+    ->fields('pa', array('oid'));
 
   // Base conditions, and an ID check if necessary.
   $conditions = db_and()
@@ -1393,19 +1385,16 @@ function uc_attribute_class_option_load($oid, $pcid) {
  */
 function uc_attribute_product_option_load($oid, $nid) {
   $query = db_select('uc_product_options', 'po');
-  //$query->leftJoin('uc_attribute_options', 'ao', 'po.oid = ao.oid');
   $query->fields('po', array('nid', 'oid', 'cost', 'price', 'weight', 'ordering'))
-    //->fields('ao', array('name', 'aid'))
     ->condition('po.oid', $oid)
     ->condition("po.nid", $nid)
     ->orderBy('po.ordering');
-    //->orderBy('ao.name');
   $result = $query->execute()->fetchObject();
   // @todo How do we get the aid? Go through all attributes and find the option?
   // $config = config('uc_attribute.attributes');
   // $global_attributes = $config->get("attributes");
   // @todo add name and sort.
-  backdrop_sort($result, array('ordering' => SORT_NUMERIC, 'name' => SORT_STRING));
+  // backdrop_sort($result, array('ordering' => SORT_NUMERIC, 'name' => SORT_STRING));
   return $result;
 }
 
@@ -2160,7 +2149,17 @@ function _uc_attribute_display_types() {
  *   Array of attribute ids that have price affecting options.
  */
 function uc_attribute_priced_attributes($nid) {
-  $aids = db_query("SELECT DISTINCT (pa.aid) FROM {uc_product_attributes} pa INNER JOIN {uc_attribute_options} ao ON ao.aid = pa.aid INNER JOIN {uc_product_options} po ON (po.oid = ao.oid AND po.nid = pa.nid) WHERE pa.nid = :nid AND po.price <> :price AND pa.display <> :display", array(':nid' => $nid, ':price' => 0, ':display' => 0))->fetchCol();
+  $aids = array();
+  $oids = db_query("SELECT DISTINCT (po.oid) FROM {uc_product_options} po WHERE pa.nid = :nid AND po.price <> :price", array(':nid' => $nid, ':price' => 0))->fetchCol();
+  $config = config('uc_attribute.attributes', 'attributes');
+  $attributes = $config->get('attributes');
+  foreach ($oids as $oid) {
+    foreach ($attributes as $attribute) {
+      if (in_array($oid, $attribute['options']) && $attribute['display'] != 0) {
+        $aids[] = $attribute['aid'];
+      }
+    }
+  }
 
   return $aids;
 }
