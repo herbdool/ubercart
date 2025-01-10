@@ -951,8 +951,10 @@ function uc_object_options_form($form, &$form_state, $object, $type) {
     backdrop_set_title($class->name);
     // $attributes = uc_class_get_attributes($id);
     // Sort by null_order, ordering, default_ordering, name.
-    $attributes = array();
     $attributes = $config->get('classes.' . $id);
+    if (!$attributes) {
+      $attributes = array();
+    }
     // Add defaults based on attribute_options.
   }
 

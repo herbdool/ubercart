@@ -1763,12 +1763,12 @@ function uc_product_get_attributes($nid) {
 
   $result = db_query("SELECT upa.aid FROM {uc_product_attributes} upa WHERE upa.nid = :nid ORDER BY upa.ordering", array(':nid' => $nid));
 
-  // @todo order by ordering, name.
-  backdrop_sort($result, array('ordering' => SORT_NUMERIC, 'name' => SORT_STRING));
-
   foreach ($result as $attribute) {
     $attributes[$attribute->aid] = uc_attribute_product_load($attribute->aid, $nid);
   }
+
+  // @todo order by ordering, name.
+  // backdrop_sort($attributes, array('ordering' => SORT_NUMERIC, 'name' => SORT_STRING));
 
   return $attributes;
 }
